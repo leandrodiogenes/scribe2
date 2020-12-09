@@ -17,8 +17,10 @@ use Knuckles\Scribe\Extracting\Strategies\Strategy;
 use Knuckles\Scribe\Tools\ConsoleOutputUtils as c;
 use Knuckles\Scribe\Tools\ErrorHandlingUtils as e;
 use Knuckles\Scribe\Tools\Utils;
+use Knuckles\Scribe\Tools\Utils as u;
 use ReflectionClass;
 use ReflectionFunctionAbstract;
+use ReflectionParameter;
 
 /**
  * Make a call to the route and retrieve its response.
@@ -57,6 +59,12 @@ class ResponseCalls extends Strategy
 
         // Mix in parsed parameters with manually specified parameters.
         $context = $this->setAuthFieldProperly($context, $context['auth'] ?? null);
+
+        if(!empty($context['metadata']['guard'])){
+            $context['headers']['Authorization'] = "Bearer ".config("scribe.auth.use_value.{$context['metadata']['guard']}");
+        }
+
+
         $bodyParameters = array_merge($context['cleanBodyParameters'] ?? [], $rulesToApply['bodyParams'] ?? []);
         $queryParameters = array_merge($context['cleanQueryParameters'] ?? [], $rulesToApply['queryParams'] ?? []);
         $urlParameters = $context['cleanUrlParameters'] ?? [];
@@ -114,10 +122,34 @@ class ResponseCalls extends Strategy
      * @param array $headers
      *
      * @return Request
+     * @throws \ReflectionException
      */
     protected function prepareRequest(Route $route, array $rulesToApply, array $urlParams, array $bodyParams, array $queryParams, array $fileParameters, array $headers)
     {
-        $uri = Utils::getUrlWithBoundParameters($route, $urlParams);
+
+        [$controllerName, $methodName] = u::getRouteClassAndMethodNames($route);
+        $controller = new ReflectionClass($controllerName);
+        $method = u::getReflectedRouteMethod([$controllerName, $methodName]);
+
+        $parameters = $method->getParameters();
+
+        $replaceParameters = [];
+        foreach($parameters as $key=> $parameter){
+            /**@var ReflectionParameter $parameter * */
+            $class = $parameter->getClass();
+            if(!empty($class) and $class->isSubclassOf(\Illuminate\Database\Eloquent\Model::class)){
+                $className = $class->getName();
+                if(class_exists($className)) {
+                    $class_instance = app($className);
+                    if( $class_instance and !empty($model = $class_instance->first())){
+                        $replaceParameters[$parameter->getName()] = $model->id;
+                    }
+                }
+            }
+        }
+
+
+        $uri = Utils::getUrlWithBoundParameters($route, $urlParams,$replaceParameters);
         $routeMethods = $this->getMethods($route);
         $method = array_shift($routeMethods);
         $cookies = isset($rulesToApply['cookies']) ? $rulesToApply['cookies'] : [];

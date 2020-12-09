@@ -340,6 +340,9 @@ INTRO
         'responseFields' => [
             \Knuckles\Scribe\Extracting\Strategies\ResponseFields\GetFromResponseFieldTag::class,
         ],
+        'postmanEvents' => [
+            \Knuckles\Scribe\Extracting\Strategies\Postman\GetPostmanEventsStrategy::class
+        ],
     ],
 
     /*

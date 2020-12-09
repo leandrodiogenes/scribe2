@@ -2,17 +2,37 @@
 
 namespace Knuckles\Scribe\Extracting;
 
+use Config;
 use Faker\Factory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Testing\File;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
+use Knuckles\Scribe\Extracting\Strategies\BodyParameters\GetFromBodyParamTag;
+use Knuckles\Scribe\Extracting\Strategies\BodyParameters\GetFromFormRequest;
+use Knuckles\Scribe\Extracting\Strategies\Headers\GetFromHeaderTag;
+use Knuckles\Scribe\Extracting\Strategies\Headers\GetFromRouteRules;
+use Knuckles\Scribe\Extracting\Strategies\Metadata\GetFromDocBlocks;
+use Knuckles\Scribe\Extracting\Strategies\QueryParameters\GetFromQueryParamTag;
+use Knuckles\Scribe\Extracting\Strategies\ResponseFields\GetFromResponseFieldTag;
+use Knuckles\Scribe\Extracting\Strategies\Responses\ResponseCalls;
+use Knuckles\Scribe\Extracting\Strategies\Responses\UseApiResourceTags;
+use Knuckles\Scribe\Extracting\Strategies\Responses\UseResponseFileTag;
+use Knuckles\Scribe\Extracting\Strategies\Responses\UseResponseTag;
+use Knuckles\Scribe\Extracting\Strategies\Responses\UseTransformerTags;
 use Knuckles\Scribe\Extracting\Strategies\Strategy;
+use Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromLaravelAPI;
+use Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromLumenAPI;
+use Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromUrlParamTag;
+use Knuckles\Scribe\Tools\AuthConfigHelper;
 use Knuckles\Scribe\Tools\DocumentationConfig;
 use Knuckles\Scribe\Tools\Utils as u;
 use ReflectionClass;
+use ReflectionException;
 use ReflectionFunctionAbstract;
+use ReflectionParameter;
 
 class Generator
 {
@@ -69,11 +89,11 @@ class Generator
     }
 
     /**
-     * @param \Illuminate\Routing\Route $route
+     * @param Route $route
      * @param array $routeRules Rules to apply when generating documentation for this route
      *
      * @return array
-     * @throws \ReflectionException
+     * @throws ReflectionException
      *
      */
     public function processRoute(Route $route, array $routeRules = [])
@@ -95,13 +115,34 @@ class Generator
         $urlParameters = $this->fetchUrlParameters($controller, $method, $route, $routeRules, $parsedRoute);
         $parsedRoute['urlParameters'] = $urlParameters;
         $parsedRoute['cleanUrlParameters'] = self::cleanParams($urlParameters);
-        $parsedRoute['boundUri'] = u::getUrlWithBoundParameters($route, $parsedRoute['cleanUrlParameters']);
+
+        $parameters = $method->getParameters();
+
+        $replaceParameters = [];
+        foreach($parameters as $key=> $parameter){
+            /**@var ReflectionParameter $parameter * */
+            $class = $parameter->getClass();
+            if(!empty($class) and $class->isSubclassOf(Model::class)){
+                $className = $class->getName();
+                if(class_exists($className)) {
+                    $class_instance = app($className);
+                    if( $class_instance and !empty($model = $class_instance->first())){
+                        $replaceParameters[$parameter->getName()] = $model->id;
+                    }
+                }
+            }
+        }
+
+        $parsedRoute['boundUri'] = u::getUrlWithBoundParameters($route, $parsedRoute['cleanUrlParameters'],$replaceParameters);
 
         $parsedRoute = $this->addAuthField($parsedRoute);
 
         $queryParameters = $this->fetchQueryParameters($controller, $method, $route, $routeRules, $parsedRoute);
         $parsedRoute['queryParameters'] = $queryParameters;
         $parsedRoute['cleanQueryParameters'] = self::cleanParams($queryParameters);
+
+        $postmanEvents = $this->fetchPostmanEvents($controller, $method, $route, $routeRules, $parsedRoute);
+        $parsedRoute['postmanEvents'] = $postmanEvents;
 
         $headers = $this->fetchRequestHeaders($controller, $method, $route, $routeRules, $parsedRoute);
         $parsedRoute['headers'] = $headers;
@@ -145,6 +186,7 @@ class Generator
             'groupName' => $this->config->get('default_group', ''),
             'groupDescription' => '',
             'title' => '',
+            'guard' => '',
             'description' => '',
             'authenticated' => false,
         ];
@@ -161,6 +203,12 @@ class Generator
     {
         return $this->iterateThroughStrategies('queryParameters', $context, [$route, $controller, $method, $rulesToApply]);
     }
+
+    protected function fetchPostmanEvents(ReflectionClass $controller, ReflectionFunctionAbstract $method, Route $route, array $rulesToApply, array $context = [])
+    {
+        return $this->iterateThroughStrategies('postmanEvents', $context, [$route, $controller, $method, $rulesToApply]);
+    }
+
 
     protected function fetchBodyParameters(ReflectionClass $controller, ReflectionFunctionAbstract $method, Route $route, array $rulesToApply, array $context = [])
     {
@@ -195,33 +243,36 @@ class Generator
     {
         $defaultStrategies = [
             'metadata' => [
-                \Knuckles\Scribe\Extracting\Strategies\Metadata\GetFromDocBlocks::class,
+                GetFromDocBlocks::class,
+            ],
+            'postmanEvents' => [
+
             ],
             'urlParameters' => [
-                \Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromLaravelAPI::class,
-                \Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromLumenAPI::class,
-                \Knuckles\Scribe\Extracting\Strategies\UrlParameters\GetFromUrlParamTag::class,
+                GetFromLaravelAPI::class,
+                GetFromLumenAPI::class,
+                GetFromUrlParamTag::class,
             ],
             'queryParameters' => [
-                \Knuckles\Scribe\Extracting\Strategies\QueryParameters\GetFromQueryParamTag::class,
+                GetFromQueryParamTag::class,
             ],
             'headers' => [
-                \Knuckles\Scribe\Extracting\Strategies\Headers\GetFromRouteRules::class,
-                \Knuckles\Scribe\Extracting\Strategies\Headers\GetFromHeaderTag::class,
+                GetFromRouteRules::class,
+                GetFromHeaderTag::class,
             ],
             'bodyParameters' => [
-                \Knuckles\Scribe\Extracting\Strategies\BodyParameters\GetFromFormRequest::class,
-                \Knuckles\Scribe\Extracting\Strategies\BodyParameters\GetFromBodyParamTag::class,
+                GetFromFormRequest::class,
+                GetFromBodyParamTag::class,
             ],
             'responses' => [
-                \Knuckles\Scribe\Extracting\Strategies\Responses\UseTransformerTags::class,
-                \Knuckles\Scribe\Extracting\Strategies\Responses\UseResponseTag::class,
-                \Knuckles\Scribe\Extracting\Strategies\Responses\UseResponseFileTag::class,
-                \Knuckles\Scribe\Extracting\Strategies\Responses\UseApiResourceTags::class,
-                \Knuckles\Scribe\Extracting\Strategies\Responses\ResponseCalls::class,
+                UseTransformerTags::class,
+                UseResponseTag::class,
+                UseResponseFileTag::class,
+                UseApiResourceTags::class,
+                ResponseCalls::class,
             ],
             'responseFields' => [
-                \Knuckles\Scribe\Extracting\Strategies\ResponseFields\GetFromResponseFieldTag::class,
+                GetFromResponseFieldTag::class,
             ],
         ];
 
@@ -339,6 +390,8 @@ class Generator
     public function addAuthField(array $parsedRoute): array
     {
         $parsedRoute['auth'] = null;
+
+        $guard = $parsedRoute['metadata']['guard'];
         $isApiAuthed = $this->config->get('auth.enabled', false);
         if (!$isApiAuthed || !$parsedRoute['metadata']['authenticated']) {
             return $parsedRoute;
@@ -352,7 +405,18 @@ class Generator
             $faker->seed($this->config->get('faker_seed'));
         }
         $token = $faker->shuffle('abcdefghkvaZVDPE1864563');
-        $valueToUse = $this->config->get('auth.use_value');
+
+        $valueToUse = config("scribe.auth.use_value.{$guard}");
+
+        if(!$valueToUse) {
+            $model = AuthConfigHelper::getProviderModel(config("auth.guards.{$guard}.provider"));
+            $user     = $model::first();
+            if($user) {
+                $valueToUse = $user->createToken('scribe')->accessToken;
+                Config::set('scribe.auth.use_value.'.$guard, $valueToUse);
+            }
+        }
+
         $valueToDisplay = $this->config->get('auth.placeholder');
 
         switch ($strategy) {

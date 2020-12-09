@@ -148,9 +148,10 @@ class GetFromFormRequest extends Strategy
             // Make sure the user-specified description comes first.
             $userSpecifiedDescription = $userSpecifiedParameterInfo['description'] ?? '';
             $validationDescription = trim($parameterData['description'] ?: '');
-            $fullDescription = trim($userSpecifiedDescription . ' ' . trim($validationDescription));
+            $fullDescription = trim($userSpecifiedDescription . ($userSpecifiedDescription && $validationDescription?'<br>':' ') . trim($validationDescription));
             // Let's have our sentences end with full stops, like civilized people.🙂
             $parameterData['description'] = $fullDescription ? rtrim($fullDescription, '.') . '.' : $fullDescription;
+            $parameterData['description'] = str_replace(':attribute','',$parameterData['description']);
 
             // Set default values for type
             if (is_null($parameterData['type'])) {
@@ -173,6 +174,11 @@ class GetFromFormRequest extends Strategy
         return $parameters;
     }
 
+    public function changeDescription(&$parameterData, $concat)
+    {
+
+        $parameterData['description'] .= (!$parameterData['description'] ? '':'<br>').$concat;
+    }
     /**
      * This method will transform validation rules from:
      * 'param1' => 'int|required'  TO  'param1' => ['int', 'required']
@@ -267,7 +273,7 @@ class GetFromFormRequest extends Strategy
                 break;
             case 'file':
                 $parameterData['type'] = 'file';
-                $parameterData['description'] .= 'The value must be a file.';
+                $this->changeDescription($parameterData,'O valor precisa ser um arquivo') ;
                 $parameterData['setter'] = function () {
                     return $this->generateDummyValue('file');
                 };
@@ -278,13 +284,13 @@ class GetFromFormRequest extends Strategy
              */
             case 'timezone':
                 // Laravel's message merely says "The value must be a valid zone"
-                $parameterData['description'] .= "The value must be a valid time zone, such as <code>Africa/Accra</code>. ";
+                $this->changeDescription($parameterData,"The value must be a valid time zone, such as <code>Africa/Accra</code>. ");
                 $parameterData['setter'] = function () {
                     return $this->getFaker()->timezone;
                 };
                 break;
             case 'email':
-                $parameterData['description'] .= d::getDescription($rule) . ' ';
+                $this->changeDescription($parameterData,d::getDescription($rule) . ' ');
                 $parameterData['setter'] = function () {
                     return $this->getFaker()->safeEmail;
                 };
@@ -296,10 +302,10 @@ class GetFromFormRequest extends Strategy
                 };
                 $parameterData['type'] = 'string';
                 // Laravel's message is "The value format is invalid". Ugh.🤮
-                $parameterData['description'] .= "The value must be a valid URL. ";
+                $this->changeDescription($parameterData,"O valor precisa ser uma URL válida");
                 break;
             case 'ip':
-                $parameterData['description'] .= d::getDescription($rule) . ' ';
+                $this->changeDescription($parameterData,d::getDescription($rule) . ' ');
                 $parameterData['type'] = 'string';
                 $parameterData['setter'] = function () {
                     return $this->getFaker()->ipv4;
@@ -307,14 +313,14 @@ class GetFromFormRequest extends Strategy
                 break;
             case 'json':
                 $parameterData['type'] = 'string';
-                $parameterData['description'] .= d::getDescription($rule) . ' ';
+                $this->changeDescription($parameterData,d::getDescription($rule) . ' ');
                 $parameterData['setter'] = function () {
                     return json_encode([$this->getFaker()->word, $this->getFaker()->word,]);
                 };
                 break;
             case 'date':
                 $parameterData['type'] = 'string';
-                $parameterData['description'] .= d::getDescription($rule) . ' ';
+                $this->changeDescription($parameterData,d::getDescription($rule) . ' ');
                 $parameterData['setter'] = function () {
                     return date(\DateTime::ISO8601, time());
                 };
@@ -322,7 +328,7 @@ class GetFromFormRequest extends Strategy
             case 'date_format':
                 $parameterData['type'] = 'string';
                 // Laravel description here is "The value must match the format Y-m-d". Not descriptive enough.
-                $parameterData['description'] .= "The value must be a valid date in the format {$arguments[0]} ";
+                $this->changeDescription($parameterData,"O valor precisa ser uma data válida no formato {$arguments[0]} ");
                 $parameterData['setter'] = function () use ($arguments) {
                     return date($arguments[0], time());
                 };
@@ -349,12 +355,33 @@ class GetFromFormRequest extends Strategy
                 $parameterData['setter'] = function () { return $this->getFaker()->numberBetween($arguments[0], $arguments[1]); };
                 break;*/
 
+            case 'unique':
+                $this->changeDescription($parameterData,'Será validado se já existe um registro com esse valor cadastrado. ');
+                break;
+            case 'min_words':
+                $parameterData['type'] = $parameterData['type'] ?: 'number';
+                $this->changeDescription($parameterData,"*O campo precisa conter no minimo {$arguments[0]} ".( $arguments[0] > 1 ? 'palavras.':'palavra.').' ');
+                break;
+            case 'digits':
+                $parameterData['type'] = $parameterData['type'] ?: 'number';
+                $this->changeDescription($parameterData,d::getDescription($rule, [':digits' => $arguments[0]]).' ');
+                break;
+
+            case 'between':
+                $parameterData['type'] = $parameterData['type'] ?: 'number';
+                $this->changeDescription($parameterData,d::getDescription($rule, [':min' => $arguments[0], ':max' => $arguments[1]], $parameterData['type'] == 'string' ? 'string':'numeric').' ');
+                $parameterData['setter'] = function () use ($arguments) { return $this->getFaker()->numberBetween($arguments[0], $arguments[1]); };
+                break;
+            case 'digits_between':
+                $parameterData['type'] = $parameterData['type'] ?: 'number';
+                $this->changeDescription($parameterData,d::getDescription($rule, [':min' => $arguments[0], ':max' => $arguments[1]]).' ');
+                break;
             /**
              * Special file types.
              */
             case 'image':
                 $parameterData['type'] = 'file';
-                $parameterData['description'] .= d::getDescription($rule) . ' ';
+                $this->changeDescription($parameterData,d::getDescription($rule) . ' ');
                 $parameterData['setter'] = function () {
                     // This is fine because the file example generator generates an image
                     return $this->generateDummyValue('file');
@@ -367,7 +394,7 @@ class GetFromFormRequest extends Strategy
             case 'in':
                 // Not using the rule description here because it only says "The attribute is invalid"
                 $description = 'The value must be one of ' . w::getListOfValuesAsFriendlyHtmlString($arguments);
-                $parameterData['description'] .= $description . ' ';
+                $this->changeDescription($parameterData,$description . ' ');
                 $parameterData['setter'] = function () use ($arguments) {
                     return Arr::random($arguments);
                 };

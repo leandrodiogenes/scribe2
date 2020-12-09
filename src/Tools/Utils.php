@@ -17,11 +17,11 @@ use ReflectionFunctionAbstract;
 
 class Utils
 {
-    public static function getUrlWithBoundParameters(Route $route, array $urlParameters = []): string
+    public static function getUrlWithBoundParameters(Route $route, array $urlParameters = [], array $replaceParameters = []): string
     {
         $uri = $route->uri();
 
-        return self::replaceUrlParameterPlaceholdersWithValues($uri, $urlParameters);
+        return self::replaceUrlParameterPlaceholdersWithValues($uri, $urlParameters, $replaceParameters);
     }
 
     /**
@@ -30,10 +30,11 @@ class Utils
      *
      * @param string $uri
      * @param array $urlParameters Dictionary of url params and example values
+     * @param array $replaceParameters
      *
      * @return mixed
      */
-    public static function replaceUrlParameterPlaceholdersWithValues(string $uri, array $urlParameters)
+    public static function replaceUrlParameterPlaceholdersWithValues(string $uri, array $urlParameters, array $replaceParameters = [])
     {
         if (empty($urlParameters)) {
             return $uri;
@@ -61,6 +62,18 @@ class Utils
         foreach ($urlParameters as $parameterName => $example) {
             $uri = preg_replace('#\{' . $parameterName . '\??}#', $example, $uri);
         }
+
+        //TODO  implement parameters example values
+
+        /*
+        foreach ($parameterPaths[0] as $parameterPath) {
+            $key = trim($parameterPath, '{?}');
+            if (isset($replaceParameters[$key])) {
+                $example = $replaceParameters[$key];
+                $uri = str_replace($parameterPath, $example, $uri);
+            }
+        }
+        */
 
         // Remove unbound optional parameters with nothing
         $uri = preg_replace('#{([^/]+\?)}#', '', $uri);

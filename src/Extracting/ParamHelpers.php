@@ -5,6 +5,7 @@ namespace Knuckles\Scribe\Extracting;
 use Faker\Factory;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
+use Knuckles\Scribe\Tools\WritingUtils as w;
 
 trait ParamHelpers
 {
@@ -40,13 +41,19 @@ trait ParamHelpers
                 return $faker->numberBetween(1, 20);
             },
             'number' => function () use ($faker) {
-                return $faker->randomFloat();
+                return $faker->randomFloat(2,20,100);
+            },
+            'float' => function () use ($faker) {
+                return $faker->randomFloat(2,20,100);
             },
             'boolean' => function () use ($faker) {
                 return $faker->boolean();
             },
             'string' => function () use ($faker) {
                 return $faker->word;
+            },
+            'uuid' => function () use ($faker) {
+                return $faker->uuid;
             },
             'object' => function () {
                 return [];
@@ -187,5 +194,20 @@ trait ParamHelpers
         }
 
         return [$description, $example];
+    }
+    /**
+     * @param string $description
+     *
+     * @return array The description and included example.
+     */
+    protected function parseValuesFromParamDescription(string $description)
+    {
+        $values = null;
+        if (preg_match('/(.*)\bValues:\s*([\s\S]+)\s*/', $description, $content)) {
+            $values = explode(',',$content[2]);
+            $description = trim($content[1])." <br>Deve conter um dos seguintes valores: " . w::getListOfValuesAsFriendlyHtmlString($values);
+        }
+
+        return [$description, $values];
     }
 }

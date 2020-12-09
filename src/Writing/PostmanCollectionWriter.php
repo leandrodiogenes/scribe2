@@ -41,6 +41,7 @@ class PostmanCollectionWriter
                     'value' => parse_url($this->baseUrl, PHP_URL_HOST) ?: $this->baseUrl, // if there's no protocol, parse_url might fail
                 ],
             ],
+            'variables' => config('scribe.postman.variables'),
             'info' => [
                 'name' => $this->config->get('title') ?: config('app.name'),
                 '_postman_id' => Uuid::uuid4()->toString(),
@@ -99,6 +100,7 @@ class PostmanCollectionWriter
     {
         $endpointItem = [
             'name' => $endpoint['metadata']['title'] !== '' ? $endpoint['metadata']['title'] : $endpoint['uri'],
+            'event' => $this->resolvePostmanEvents($endpoint),
             'request' => [
                 'url' => $this->generateUrlObject($endpoint),
                 'method' => $endpoint['methods'][0],
@@ -117,6 +119,35 @@ class PostmanCollectionWriter
         return $endpointItem;
     }
 
+    protected function resolvePostmanEvents($route)
+    {
+        $headers = collect($route['postmanEvents']);
+
+        return $headers
+            ->map(function ($value, $header) {
+                $value = str_replace('@{{', '{{', $value);
+                return [
+                    'listen' => 'test',
+                    'script'=>[
+                        "exec" => [$value],
+                        "type" => "text/javascript"
+                    ],
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    protected function parseFormDataParameters(array &$route){
+        foreach ($route['cleanBodyParameters'] as $key => $value) {
+            if(is_array($value)){
+                foreach($value as $subkey => $subval){
+                    $route['cleanBodyParameters']["{$key}[$subkey]"] = $subval;
+                }
+                unset($route['cleanBodyParameters'][$key]);
+            }
+        }
+    }
     protected function getBodyData(array $endpoint): array
     {
         $body = [];
@@ -134,6 +165,7 @@ class PostmanCollectionWriter
 
         switch ($inputMode) {
             case 'formdata':
+                $this->parseFormDataParameters($route);
                 foreach ($endpoint['cleanBodyParameters'] as $key => $value) {
                     $params = [
                         'key' => $key,
@@ -167,6 +199,7 @@ class PostmanCollectionWriter
         [$where, $authParam] = $this->getAuthParamToExclude();
 
         $headers = collect($route['headers']);
+        $guard = $route['metadata']['guard'];
         if ($where === 'header') {
             unset($headers[$authParam]);
         }
@@ -175,10 +208,13 @@ class PostmanCollectionWriter
             ->union([
                 'Accept' => 'application/json',
             ])
-            ->map(function ($value, $header) {
+            ->map(function ($value, $header) use ($guard) {
                 // Allow users to write ['header' => '@{{value}}'] in config
                 // and have it rendered properly as {{value}} in the Postman collection.
                 $value = str_replace('@{{', '{{', $value);
+                if(!empty($guard) and $header === "Authorization"){
+                    $value = "{{token_$guard}}";
+                }
                 return [
                     'key' => $header,
                     'value' => $value,
