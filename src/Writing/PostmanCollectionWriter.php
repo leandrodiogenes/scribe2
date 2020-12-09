@@ -165,7 +165,7 @@ class PostmanCollectionWriter
 
         switch ($inputMode) {
             case 'formdata':
-                $this->parseFormDataParameters($route);
+                $this->parseFormDataParameters($endpoint);
                 foreach ($endpoint['cleanBodyParameters'] as $key => $value) {
                     $params = [
                         'key' => $key,
